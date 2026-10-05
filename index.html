@@ -747,10 +747,17 @@ button:disabled { opacity: 0.45; cursor: default; }
     cfg: ls.get('vp-gh'), sha: {}, loadedAt: null,
     url(id) { return 'https://api.github.com/repos/' + this.cfg.repo + '/contents/' + id + '.json'; },
     headers() { return { Authorization: 'Bearer ' + this.cfg.token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }; },
+    async check() {
+      // закрытый репозиторий без доступа GitHub выдаёт как «не найден», поэтому проверяем его отдельно
+      const r = await fetch('https://api.github.com/repos/' + this.cfg.repo + '?t=' + Date.now(), { headers: this.headers(), cache: 'no-store' });
+      if (r.status === 401) throw new Error('токен не подходит или истёк. Создайте новый и вставьте его');
+      if (r.status === 404 || r.status === 403) throw new Error('токен не видит репозиторий ' + this.cfg.repo + '. В настройках токена в Repository access выберите этот репозиторий, а в Permissions → Contents поставьте Read and write');
+      if (!r.ok) throw new Error('GitHub ответил ' + r.status);
+    },
     async get(id) {
       const r = await fetch(this.url(id) + '?t=' + Date.now(), { headers: this.headers(), cache: 'no-store' });
       if (r.status === 404) { this.sha[id] = undefined; return null; }
-      if (!r.ok) throw new Error(r.status === 401 ? 'токен не подходит или истёк' : r.status === 403 ? 'у токена нет доступа к репозиторию' : 'GitHub ответил ' + r.status);
+      if (!r.ok) throw new Error(r.status === 401 ? 'токен не подходит или истёк' : r.status === 403 ? 'у токена нет права Contents: Read and write для этого репозитория' : 'GitHub ответил ' + r.status);
       const j = await r.json(); this.sha[id] = j.sha;
       return JSON.parse(b64dec(j.content));
     },
@@ -763,9 +770,14 @@ button:disabled { opacity: 0.45; cursor: default; }
       const j = await r.json(); this.sha[id] = j.content.sha;
     },
   };
+  let ghError = '';
   async function ghLoadAll() {
-    for (const id of PROFILE_IDS) { applyLoaded(id, await gh.get(id)); }
-    gh.loadedAt = new Date();
+    await gh.check();
+    const got = {};
+    for (const id of PROFILE_IDS) got[id] = await gh.get(id);
+    if (!PROFILE_IDS.some((id) => got[id] && got[id].profile)) throw new Error('в репозитории ' + gh.cfg.repo + ' нет файлов с данными (main.json, partner.json). Если токен создан для другого репозитория, выберите в его настройках нужный');
+    PROFILE_IDS.forEach((id) => applyLoaded(id, got[id]));
+    gh.loadedAt = new Date(); ghError = '';
   }
   const timers = {}; let saving = Promise.resolve();
   function persist(id) {
@@ -814,7 +826,7 @@ button:disabled { opacity: 0.45; cursor: default; }
       if (gh.cfg && gh.cfg.repo && gh.cfg.token) {
         setStore('gh', 'Загружаю данные из GitHub…');
         try { await ghLoadAll(); setStore('gh'); store.kind = 'gh'; }
-        catch (e) { setStore('local', 'Не удалось загрузить из GitHub: ' + e.message + '. Показана копия из этого браузера.'); }
+        catch (e) { ghError = 'Не удалось загрузить данные: ' + e.message + '.'; setStore('local', 'Нет связи с GitHub'); }
       } else setStore('local');
       PROFILE_IDS.forEach(loaded); renderSync(); return;
     }
@@ -1167,18 +1179,18 @@ button:disabled { opacity: 0.45; cursor: default; }
         '<div class="row"><button id="ghReload">Загрузить заново</button><button class="danger" id="ghOff">Отключить на этом устройстве</button></div>'
       : '<p class="small" style="max-width:70ch">Расчёты и отпуска хранятся в вашем закрытом репозитории на GitHub. Подключите его один раз на каждом устройстве: укажите репозиторий и вставьте токен доступа.</p>' +
         '<div class="row"><label class="f">Репозиторий<input id="ghRepo" value="' + esc((gh.cfg && gh.cfg.repo) || (host ? host + '/vacation-planner-data' : '')) + '" placeholder="владелец/репозиторий" style="min-width:240px"></label>' +
-        '<label class="f">Токен доступа<input id="ghToken" type="password" autocomplete="off" placeholder="github_pat_…" style="min-width:240px"></label>' +
+        '<label class="f">Токен доступа<input id="ghToken" type="password" autocomplete="off" placeholder="' + (gh.cfg && gh.cfg.token ? 'сохранённый токен, можно вставить новый' : 'github_pat_…') + '" style="min-width:240px"></label>' +
         '<button class="primary" id="ghConnect">Подключить</button></div>') +
-      '<p class="small muted" id="ghMsg" role="status"></p>';
+      '<p class="small" id="ghMsg" role="status" style="color:var(--bad);max-width:70ch">' + (on ? '' : esc(ghError)) + '</p>';
   }
   $('syncPanel').addEventListener('click', async (e) => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.id === 'ghConnect') {
-      const repo = $('ghRepo').value.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, ''), token = $('ghToken').value.trim();
+      const repo = $('ghRepo').value.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, ''), token = $('ghToken').value.trim() || (gh.cfg && gh.cfg.token) || '';
       if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !token) { $('ghMsg').textContent = 'Укажите репозиторий в виде «владелец/название» и вставьте токен.'; return; }
       gh.cfg = { repo, token }; $('ghMsg').textContent = 'Проверяю доступ…';
       try { await ghLoadAll(); ls.set('vp-gh', gh.cfg); store.kind = 'gh'; setStore('gh'); PROFILE_IDS.forEach((id) => { data[id].loaded = false; loaded(id); }); renderSync(); }
-      catch (err) { gh.cfg = null; $('ghMsg').textContent = 'Не получилось подключиться: ' + err.message + '.'; }
+      catch (err) { ghError = 'Не получилось подключиться: ' + err.message + '.'; $('ghMsg').textContent = ghError; }
     } else if (b.id === 'ghReload') { await refreshGh(true); }
     else if (b.id === 'ghOff') {
       if (!b.dataset.armed) { b.dataset.armed = 1; b.textContent = 'Точно отключить?'; return; }

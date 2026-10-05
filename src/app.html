@@ -1,0 +1,231 @@
+<title>Планировщик отпускных</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Unbounded:wght@500;600&display=swap">
+<style>
+/* Лист производственного календаря: выходные розовым, праздники красным, отпуск — морской заливкой; цифры моноширинным, как в расчётном листке */
+:root {
+  --bg: #f3f5f8; --surface: #ffffff; --ink: #172130; --muted: #5b6676; --line: #dde2e9; --soft: #eef1f5;
+  --sea: #0e7c78; --sea-soft: #d7efed; --on-sea: #ffffff; --sea-stripe: rgba(14, 124, 120, 0.30);
+  --off-bg: #fbe3e1; --off-ink: #b4332c; --holiday: #d43a31; --on-holiday: #ffffff;
+  --good: #1d7f48; --bad: #b3261e; --warn: #9a6200; --warn-soft: #fbf0d9;
+  --f-display: "Unbounded", "Golos Text", system-ui, sans-serif;
+  --f-body: "Golos Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e131a; --surface: #151c26; --ink: #e5e9ef; --muted: #95a1b2; --line: #263142; --soft: #1b2430;
+  --sea: #3cb8b2; --sea-soft: #123a3a; --on-sea: #0b1116; --sea-stripe: rgba(60, 184, 178, 0.38);
+  --off-bg: #3b1f22; --off-ink: #f59a92; --holiday: #e0544b; --on-holiday: #ffffff;
+  --good: #4cc27e; --bad: #f2706a; --warn: #e3ac4a; --warn-soft: #33290f; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #151c26; --ink: #e5e9ef; --muted: #95a1b2; --line: #263142; --soft: #1b2430;
+  --sea: #3cb8b2; --sea-soft: #123a3a; --on-sea: #0b1116; --sea-stripe: rgba(60, 184, 178, 0.38);
+  --off-bg: #3b1f22; --off-ink: #f59a92; --holiday: #e0544b; --on-holiday: #ffffff;
+  --good: #4cc27e; --bad: #f2706a; --warn: #e3ac4a; --warn-soft: #33290f; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body); }
+.wrap { max-width: 1040px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 56px; display: grid; gap: 18px; }
+h1 { font: 600 22px/1.2 var(--f-display); margin: 0; letter-spacing: -0.01em; }
+h2 { font: 600 15px/1.3 var(--f-display); margin: 0; text-wrap: balance; }
+.num, td.n { font-family: var(--f-num); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+p { margin: 0; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+.store { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.store i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.store[data-k="db"] i { background: var(--good); }
+.store[data-k="local"] i { background: var(--warn); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+label.f { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+input { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; min-width: 0; }
+input[type="number"] { font-family: var(--f-num); }
+input:focus-visible, button:focus-visible, summary:focus-visible, .upload:focus-within { outline: 2px solid var(--sea); outline-offset: 2px; }
+button, .upload { font: 500 14px var(--f-body); border-radius: 7px; border: 1px solid var(--line); background: var(--soft); color: var(--ink); padding: 7px 12px; cursor: pointer; }
+button:hover, .upload:hover { border-color: var(--muted); }
+button.primary { background: var(--sea); border-color: var(--sea); color: var(--on-sea); }
+button.chip { padding: 4px 10px; font-size: 13px; border-radius: 999px; }
+button.danger { color: var(--bad); }
+.upload { position: relative; display: inline-flex; align-items: center; gap: 8px; }
+.upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+/* календарь */
+.calbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cals { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 22px; }
+.cal h3 { font: 600 14px var(--f-body); margin: 0 0 8px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.cal h3 span { font: 400 12px var(--f-body); color: var(--muted); }
+.grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.grid .wd { font-size: 11px; color: var(--muted); text-align: center; padding-bottom: 2px; }
+.grid .wd.we { color: var(--off-ink); font-weight: 600; }
+.d { position: relative; height: 38px; display: grid; place-items: center; font: 500 14px var(--f-num); border-radius: 6px; border: none; background: none; padding: 0; color: var(--ink); }
+.d:hover { box-shadow: inset 0 0 0 1px var(--muted); }
+.d.off { background: var(--off-bg); color: var(--off-ink); }
+.d.hol { background: var(--holiday); color: var(--on-holiday); font-weight: 600; }
+.d.ww::before { content: "раб"; position: absolute; top: 1px; left: 4px; font: 500 9px var(--f-body); color: var(--muted); }
+.d.taken { background-image: repeating-linear-gradient(135deg, var(--sea-stripe) 0 4px, transparent 4px 9px); box-shadow: inset 0 0 0 1px var(--sea); }
+.d.plan { box-shadow: inset 0 0 0 2px var(--sea); }
+.d.v { box-shadow: inset 0 0 0 3px var(--sea); }
+.d.v:not(.off):not(.hol) { background: var(--sea); color: var(--on-sea); }
+.d.pay::after { content: "₽"; position: absolute; bottom: 1px; right: 4px; font: 700 10px var(--f-body); color: var(--sea); }
+.d.v:not(.off):not(.hol).pay::after, .d.hol.pay::after { color: inherit; }
+.d.empty { visibility: hidden; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 18px; height: 16px; border-radius: 4px; display: inline-grid; place-items: center; font: 600 10px var(--f-num); }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; }
+.facts b { font-family: var(--f-num); font-weight: 500; }
+
+/* сводка */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 4px; align-content: start; min-width: 0; }
+.tile .lbl { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.tile .big { font: 600 24px/1.2 var(--f-display); font-variant-numeric: tabular-nums; }
+.tile .big small { font: 500 14px var(--f-num); color: var(--muted); }
+.tile.hero { border-color: var(--sea); }
+.pos { color: var(--good); } .neg { color: var(--bad); }
+.notes { display: grid; gap: 6px; }
+.note { font-size: 13px; padding: 8px 12px; border-radius: 7px; background: var(--warn-soft); color: var(--ink); }
+.note b { color: var(--warn); }
+
+/* таблицы */
+.tw { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th { font: 500 12px var(--f-body); color: var(--muted); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.n, th.n { text-align: right; white-space: nowrap; }
+tr.vac td { background: var(--sea-soft); }
+tr.cur td { background: var(--sea-soft); }
+tr.total td { font-weight: 600; border-bottom: none; }
+tr.pao td { color: var(--muted); font-size: 13px; padding-block: 4px; }
+#sched td { border-bottom-color: transparent; }
+#sched tr.blk-start td { border-top: 2px solid var(--line); }
+#sched tr.band td { background: var(--soft); }
+#sched tr.band.vac td, #sched tr.vac td { background: var(--sea-soft); }
+#sched td.mcol { width: 1%; white-space: nowrap; font-size: 12px; color: var(--muted); vertical-align: middle; border-right: 3px solid var(--line); padding-right: 10px; }
+#sched tr.band td.mcol { border-right-color: var(--sea); }
+.sub { display: block; font-size: 12px; color: var(--muted); }
+.tag { display: inline-block; font: 500 11px var(--f-body); padding: 0 6px; border-radius: 4px; background: var(--soft); color: var(--muted); margin-left: 6px; vertical-align: 1px; }
+.tag.ok { color: var(--good); }
+.tag.warn { color: var(--warn); background: var(--warn-soft); }
+
+details > summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::after { content: "+"; font: 500 18px var(--f-num); color: var(--muted); }
+details[open] > summary::after { content: "−"; }
+details[open] > summary { margin-bottom: 14px; }
+details.panel { display: block; }
+
+.saved { display: grid; gap: 10px; }
+.sv { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 8px; }
+.sv.active { border-color: var(--sea); }
+.sv .top { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; }
+.pill { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+.pill.taken { background: var(--sea); color: var(--on-sea); border-color: var(--sea); }
+.pill.planned { border-style: dashed; border-color: var(--sea); color: var(--sea); }
+.empty-state { color: var(--muted); font-size: 14px; }
+.summary-line { font-size: 14px; max-width: 80ch; }
+ul.rules { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; max-width: 78ch; }
+@media (max-width: 560px) { .tile .big { font-size: 21px; } .panel { padding: 14px; } .d { height: 34px; font-size: 13px; } }
+@media (prefers-reduced-motion: no-preference) { .d { transition: background-color .12s, box-shadow .12s; } }
+.tabs { display: flex; gap: 4px; padding: 4px; background: var(--soft); border-radius: 10px; width: fit-content; max-width: 100%; overflow-x: auto; }
+.tabs button { border: none; background: none; padding: 7px 16px; border-radius: 7px; color: var(--muted); font-weight: 500; }
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+button:disabled { opacity: 0.45; cursor: default; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Планировщик отпускных</h1>
+    <div class="store" id="store" data-k="pending"><i></i><span id="storeText">Загружаю сохранённые данные…</span></div>
+  </header>
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Чей расчёт"></nav>
+
+  <section class="panel" id="syncPanel" hidden aria-label="Синхронизация"></section>
+  <p class="empty-state" id="noProfile" hidden>Загружаю профиль…</p>
+
+  <div id="app" style="display:grid;gap:18px">
+  <section class="panel" aria-labelledby="h-dates">
+    <h2 id="h-dates">Даты отпуска</h2>
+    <div class="row">
+      <label class="f">Первый день<input type="date" id="inStart"></label>
+      <label class="f">Последний день<input type="date" id="inEnd"></label>
+      <div class="row" style="gap:6px;align-items:center" aria-label="Длина отпуска">
+        <span class="small muted">Длина:</span>
+        <button class="chip" data-len="7">7 дн.</button>
+        <button class="chip" data-len="10">10</button>
+        <button class="chip" data-len="14">14</button>
+        <button class="chip" data-len="28">28</button>
+      </div>
+    </div>
+    <div class="facts" id="facts"></div>
+    <div class="calbar">
+      <button id="calPrev" aria-label="Предыдущий месяц">←</button>
+      <button id="calNext" aria-label="Следующий месяц">→</button>
+      <button id="btnReset">Сбросить даты</button>
+      <span class="small muted" id="calHint">Нажмите на день начала, затем на день окончания.</span>
+    </div>
+    <div class="cals" id="cals"></div>
+    <div class="legend">
+      <span><i class="sw" style="box-shadow:inset 0 0 0 2px var(--sea)"></i>запланированный отпуск</span>
+      <span><i class="sw" style="background-image:repeating-linear-gradient(135deg,var(--sea-stripe) 0 4px,transparent 4px 9px);box-shadow:inset 0 0 0 1px var(--sea)"></i>прошедший отпуск</span>
+    </div>
+    <div class="row">
+      <button class="primary" id="btnPlan">Сохранить как план</button>
+      <button id="btnTaken">Отметить как состоявшийся</button>
+      <span class="small muted" id="saveMsg" role="status"></span>
+    </div>
+  </section>
+
+  <div class="notes" id="notes"></div>
+  <div class="tiles" id="tiles"></div>
+
+  <section class="panel" aria-labelledby="h-sched">
+    <div style="display:grid;gap:4px">
+      <h2 id="h-sched">График выплат</h2>
+      <p class="small muted" id="schedSub"></p>
+    </div>
+    <div class="tw"><table id="sched"></table></div>
+  </section>
+
+  <details class="panel" id="detAlt" open>
+    <summary><h2>Другие даты с тем же числом дней отпуска</h2></summary>
+    <p class="small muted" style="margin-bottom:10px">Начало сдвигается на ±14 дней. Сверху варианты, где вы получите больше всего денег сверх обычной зарплаты.</p>
+    <div class="tw"><table id="alts"></table></div>
+  </details>
+
+  <details class="panel" id="detCalc">
+    <summary><h2>Как посчитан средний заработок</h2></summary>
+    <div id="calc"></div>
+  </details>
+
+  <section class="panel" aria-labelledby="h-saved">
+    <h2 id="h-saved">Отпуска</h2>
+    <p class="small muted">Отпуска из этого списка уменьшают зарплату в своих месяцах и исключаются из расчёта следующих отпускных.</p>
+    <div class="saved" id="saved"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-recon">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <h2 id="h-recon">Сверка с выпиской</h2>
+      <label class="upload" for="csv">Загрузить выписку CSV<input type="file" id="csv" accept=".csv,text/csv"></label>
+    </div>
+    <p class="summary-line" id="reconSum"></p>
+    <p class="small muted" id="csvMsg" role="status"></p>
+    <div class="tw"><table id="recon"></table></div>
+  </section>
+
+  <details class="panel" id="detRules">
+    <summary><h2>Правила и допущения</h2></summary>
+    <ul class="rules" id="rules"></ul>
+  </details>
+  </div>
+</div>
+
+<script>
+/*ENGINE*/
+</script>
+<script>

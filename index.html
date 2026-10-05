@@ -1160,7 +1160,7 @@ button:disabled { opacity: 0.45; cursor: default; }
     const on = store.kind === 'gh';
     const host = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : '';
     // без подключения панель стоит наверху, после подключения — внизу страницы
-    const anchor = on ? $('detRules') : $('app');
+    const anchor = on ? $('detRules') : $('noProfile');
     if (on) anchor.after(el); else anchor.before(el);
     el.innerHTML = '<h2>Синхронизация</h2>' + (on
       ? '<p class="small">Данные в закрытом репозитории GitHub <b>' + esc(gh.cfg.repo) + '</b>. Загружены в ' + (gh.loadedAt ? gh.loadedAt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—') + '.</p>' +

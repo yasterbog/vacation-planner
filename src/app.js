@@ -23,6 +23,7 @@
   const mPrep = (m) => E.MONTHS[m - 1].replace(/ь$/, 'е').replace(/й$/, 'е').replace(/т$/, 'те');
   const daysWord = (k) => { const a = Math.abs(k) % 100, b = a % 10; return a > 10 && a < 20 ? 'дней' : b === 1 ? 'день' : b >= 2 && b <= 4 ? 'дня' : 'дней'; };
   const cap = (w) => w[0].toUpperCase() + w.slice(1);
+  const plural = (k, one, few, many) => { const a = Math.abs(k) % 100, b = a % 10; return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many; };
   const today = E.parse(new Date().toISOString().slice(0, 10));
 
   // ---------- состояние ----------
@@ -332,9 +333,9 @@
     $('schedSub').textContent = 'С ' + dfull(win.a) + ' по ' + dfull(win.b) + '. Суммы на руки, после НДФЛ. Аванс и зарплата за один месяц выделены общим блоком.';
     const byDate = new Map();
     const pl = (P().employers || []).filter((e) => e.src === 'pao').map((e) => e.label)[0] || 'совместительство';
-    rows.filter((r) => !r.ghost && r.net > 0.004).forEach((r) => {
+    rows.filter((r) => !r.ghost && Math.abs(r.net) > 0.004).forEach((r) => {
       const g = byDate.get(r.date) || { date: r.date, items: [], net: 0, vac: false, adv: null, sal: null };
-      const what = r.kind === 'pao' ? pl : r.kind === 'vac' ? 'отпускные' : r.label;
+      const what = r.kind === 'pao' ? pl : r.kind === 'vac' ? 'отпускные' : r.kind === 'vacadj' ? 'перерасчёт отпускных ' + signed(r.gross, money) + ' до НДФЛ' : r.label;
       if (!g.items.includes(what)) g.items.push(what);
       g.net += r.net; g.vac = g.vac || r.kind === 'vac';
       if (r.kind === 'adv') g.adv = r.ref; if (r.kind === 'sal') g.sal = r.ref;
@@ -417,7 +418,9 @@
       const ch = v.unpaid ? v.end - v.start + 1 : E.chargedDays(v.start, v.end);
       let line = '';
       if (v.unpaid) line = '<span class="muted">Без сохранения зарплаты: дни не оплачиваются и исключаются из расчёта отпускных.</span>';
-      else if (v.factSource === 'ledger') line = '<span>Получено <b class="num">' + money(v.factNet) + '</b> на руки ' + dwd(v.factDate) + ' <span class="tag ok">из выписки</span></span><span class="muted">модель без поправки: ' + money(v.modelNet) + ' (' + signed(v.factNet - v.modelNet, money) + ')</span>';
+      else if (v.factSource === 'ledger') line = '<span>Получено <b class="num">' + money(v.factNet) + '</b> на руки ' + dwd(v.factDate) + ' <span class="tag ok">из выписки</span></span>' +
+        (v.adjGross ? '<span>Перерасчёт: ' + signed(v.adjGross, money) + ' до НДФЛ, ' + signed(v.adjNet, money) + ' на руки (' + esc((v.adjust || []).map((a) => a.note || dshort(E.parse(a.date))).join(', ')) + ')</span>' : '') +
+        '<span class="muted">модель: ' + money(v.modelNet) + ' на руки (' + (Math.abs(v.factNet + (v.adjNet || 0) - v.modelNet) < 0.005 ? 'совпадает' : signed(v.factNet + (v.adjNet || 0) - v.modelNet, money)) + ')</span>';
       else if (v.factSource === 'manual') line = '<span>Получено <b class="num">' + money(v.factNet) + '</b> на руки <span class="tag ok">' + esc(v.factNote || 'введено вручную') + '</span></span><span class="muted">модель без поправки: ' + money(v.modelNet) + ' (' + signed(v.factNet - v.modelNet, money) + ')</span>';
       else if (v.status === 'taken') line = '<span>Суммы нет в выписке. ' + (p ? 'По модели ' + money(p.net) + ' на руки.' : '') + '</span><label class="f" style="grid-auto-flow:column;align-items:center;gap:8px">Получено на руки, ₽<input type="number" step="0.01" min="0" style="width:140px" id="act-' + esc(v.id) + '" data-act="' + v.i + '" value=""></label>';
       else if (p) line = '<span>По прогнозу <b class="num">' + money(p.net) + '</b> на руки, выплата ' + dwd(p.date) + '</span>';
@@ -440,16 +443,16 @@
     }
     const matched = L.filter((l) => l.match), groups = new Set(matched.map((l) => l.match)), exact = [...groups].filter((m) => Math.abs(matched.filter((l) => l.match === m).reduce((s, l) => s + l.net, 0) - m.net) < 0.005);
     const vacL = L.filter((l) => l.vac), extra = L.filter((l) => l.extra);
-    const parts = L.length ? [L.length + ' поступлений от ' + ml + ' с ' + dshort(L[0].day) + ' по ' + dfull(L[L.length - 1].day) + '.',
+    const parts = L.length ? [L.length + ' ' + plural(L.length, 'поступление', 'поступления', 'поступлений') + ' от ' + ml + ' с ' + dshort(L[0].day) + ' по ' + dfull(L[L.length - 1].day) + '.',
       'Авансы, зарплата и премии: ' + groups.size + ', из них ' + exact.length + ' совпали с моделью до копейки' + (groups.size > exact.length ? ', остальные в пределах 0,5%' : '') + '.'] : [];
-    if (vacL.length) parts.push('Отпускные: ' + vacL.map((l) => money(l.net) + ' против ' + money(l.vac.modelNet) + ' по модели (' + signed((l.net / l.vac.modelNet - 1) * 100, (x) => x.toFixed(1).replace('.', ',') + '%') + ')').join('; ') + '. Разницу калькулятор учитывает поправкой для будущих отпускных.');
+    if (vacL.length) parts.push('Отпускные: ' + vacL.map((l) => { const fact = l.net + (l.vac.adjNet || 0); return (l.vac.adjNet ? money(l.net) + ' с перерасчётом ' + signed(l.vac.adjNet, money) + ' = ' + money(fact) : money(fact)) + ' против ' + money(l.vac.modelNet) + ' по модели (' + signed((fact / l.vac.modelNet - 1) * 100, (x) => x.toFixed(2).replace('.', ',') + '%') + ')'; }).join('; ') + '. Если разница есть, калькулятор переносит её поправкой на будущие отпускные.');
     if (extra.length) parts.push((P().extraLabel || 'Выплаты вне графика') + ': ' + extra.map((l) => money(l.net)).join(' и ') + ' на руки (' + R.extras.map((e) => rub(e.gross)).join(' и ') + ' до НДФЛ). ' + (P().extraInAvg ? 'Учтены в среднем заработке.' : 'Облагаются НДФЛ и приближают порог 2,4 млн ₽, но в средний заработок для отпускных не входят.'));
     if (PL.length) {
       const yr = E.parts(today)[0], rg = {}, pg = {};
       E.simulate(P(), M.saved, M.horizon, M.X).pays.forEach((p) => { const y = E.parts(p.date)[0]; if (p.emp === 'pao') pg[y] = (pg[y] || 0) + p.gross; else rg[y] = (rg[y] || 0) + p.gross; });
       const extraTax = Math.round(E.taxCum((rg[yr] || 0) + (pg[yr] || 0)) - E.taxCum(rg[yr] || 0) - E.taxCum(pg[yr] || 0));
       const pl = (P().employers || []).filter((e) => e.src === 'pao').map((e) => e.label)[0] || 'Совместительство';
-      parts.push(pl + ' (совместительство): ' + PL.length + ' выплат, ' + money(PL.reduce((s, l) => s + l.net, 0)) + ' ₽ на руки; дальше в графике по последним суммам. На отпускные основного работодателя не влияет.' +
+      parts.push(pl + ' (совместительство): ' + PL.length + ' ' + plural(PL.length, 'выплата', 'выплаты', 'выплат') + ', ' + money(PL.reduce((s, l) => s + l.net, 0)) + ' ₽ на руки; дальше в графике по последним суммам. На отпускные основного работодателя не влияет.' +
         (extraTax > 0 ? ' Каждый работодатель удерживает НДФЛ отдельно, поэтому за ' + yr + ' год налоговая доначислит около ' + extraTax + ' ₽, уведомление придёт в ' + (yr + 1) + '.' : ''));
     }
     if (R.missing.length) parts.push('Нет в выписке: ' + R.missing.map((p) => p.label + ' (' + dshort(p.date) + ')').join('; ') + '.');

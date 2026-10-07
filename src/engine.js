@@ -166,7 +166,7 @@
       let days = 0, earn = 0, workedWd = 0, normWd = 0;
       const rows = calc.map((x) => {
         const worked = x.cd - x.excl;
-        const dd = x.excl === 0 ? 29.3 : 29.3 * worked / x.cd;
+        const dd = x.excl === 0 ? 29.3 : r2(29.3 * worked / x.cd); // 1С округляет дни неполного месяца до сотых
         days += dd; earn += x.sal1 + x.sal2 + x.adj; workedWd += x.w1 + x.w2; normWd += x.normWd;
         return { key: x.key, y: x.y, m: x.m, cd: x.cd, worked, days: dd, salary: r2(x.sal1 + x.sal2), adj: x.adj, full: x.excl === 0 };
       });
@@ -182,7 +182,8 @@
       const modelAvg = fallback ? r2(salary / 29.3) : r2((earn + bonusSum) / days);
       const charged = chargedDays(v.start, v.end);
       const actual = v.actualGross > 0;
-      const avg = actual ? r2(v.actualGross / charged) : r2(modelAvg * k);
+      const adjGross = (v.adjust || []).reduce((s, a) => s + (+a.gross || 0), 0);
+      const avg = actual ? r2((v.actualGross + adjGross) / charged) : r2(modelAvg * k);
       const pay = actual ? r2(v.actualGross) : r2(avg * charged);
       const payDay = prevWorkday(v.start - (+S.payGap + 1));
       vacRes.push({ idx: v.idx, start: v.start, end: v.end, charged, holidays: holidaysIn(v.start, v.end), avg, modelAvg, k: actual ? 1 : k, actual, pay, payDay,
@@ -205,6 +206,11 @@
     Object.values(bonuses).forEach((b) => {
       if (b.amount > 0) pays.push({ date: b.payDay, kind: 'bonus', ref: b.key, gross: b.amount, label: 'Премия за ' + b.q + ' кв. ' + b.y, note: b.source === 'fact' ? 'факт' : '' });
     });
+    // перерасчёт отпускных: удержание или доплата в одной из следующих выплат
+    vlist.forEach((v) => (v.adjust || []).forEach((a) => {
+      pays.push({ date: parse(a.date), kind: 'vacadj', ref: iso(v.start) + ':' + a.date, gross: +a.gross, fact: true,
+        label: 'Перерасчёт отпускных ' + fmtRange(v.start, v.end), note: a.note || '' });
+    }));
     vacRes.forEach((v) => {
       if (v.unpaid) return;
       pays.push({ date: v.payDay, kind: 'vac', ref: iso(v.start), gross: v.pay, label: 'Отпускные ' + fmtRange(v.start, v.end), note: v.charged + ' дн. × ' + new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v.avg) + ' ₽' });
@@ -224,7 +230,7 @@
         if (X.pao.sal && b > lastDay) paoPay(b, X.pao.sal, 'sal', false, 'sal:' + x.key);
       });
     }
-    const order = { sal: 0, adv: 1, bonus: 2, other: 3, vac: 4, pao: 5 };
+    const order = { sal: 0, adv: 1, bonus: 2, other: 3, vacadj: 4, vac: 5, pao: 6 };
     pays.sort((a, b) => a.date - b.date || order[a.kind] - order[b.kind]);
     // НДФЛ: каждый работодатель ведёт свою базу с 1 января
     const cums = {};
@@ -388,6 +394,14 @@
     const near = (day, net) => regular.filter((p) => !used.has(p) && Math.abs(p.date - day) <= 3 && Math.abs(p.net - net) <= Math.max(5, p.net * 0.005))
       .sort((a, b) => Math.abs(a.net - net) - Math.abs(b.net - net))[0];
     L.forEach((l) => { const m = near(l.day, l.net); if (m) { used.add(m); l.match = m; } });
+    // несколько начислений одной даты могут прийти одним переводом (зарплата + перерасчёт, зарплата + разовая премия)
+    const byDate = {};
+    regular.forEach((p) => (byDate[p.date] = byDate[p.date] || []).push(p));
+    L.filter((l) => !l.match).forEach((l) => {
+      const combo = Object.values(byDate).filter((g) => g.length > 1 && g.every((p) => !used.has(p)) && Math.abs(g[0].date - l.day) <= 3)
+        .map((g) => ({ g, net: r2(g.reduce((s, p) => s + p.net, 0)) })).find((c) => Math.abs(c.net - l.net) <= Math.max(5, Math.abs(c.net) * 0.005));
+      if (combo) { combo.g.forEach((p) => used.add(p)); l.match = { date: combo.g[0].date, net: combo.net, kind: 'combo', label: combo.g.map((p) => p.label).join(' + ') }; }
+    });
     // выплата может прийти несколькими переводами в один день (например, оклад и авторское вознаграждение)
     const byDay = {};
     L.filter((l) => !l.match).forEach((l) => (byDay[l.day] = byDay[l.day] || []).push(l));
@@ -417,7 +431,9 @@
       const res = sim1.vacRes.find((r) => r.start === v.start);
       v.actualGross = grossFromNet(v.factNet, p.cumBefore);
       v.modelNet = p.net; v.modelAvg = res.modelAvg;
-      const implied = v.actualGross / res.charged;
+      const adjPays = sim1.pays.filter((x) => x.kind === 'vacadj' && x.ref.startsWith(iso(v.start) + ':'));
+      v.adjGross = r2(adjPays.reduce((s, x) => s + x.gross, 0)); v.adjNet = r2(adjPays.reduce((s, x) => s + x.net, 0));
+      const implied = (v.actualGross + v.adjGross) / res.charged;
       if (!calib || v.start > calib.start) { calib = { start: v.start, end: v.end, modelAvg: res.modelAvg, implied, modelNet: p.net, factNet: v.factNet, k: implied / res.modelAvg }; k = calib.k; }
     });
     const missing = sim0.pays.filter((p) => p.kind !== 'vac' && !used.has(p) && L.length && p.date >= L[0].day && p.date <= L[L.length - 1].day);

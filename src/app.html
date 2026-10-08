@@ -135,6 +135,9 @@ ul.rules { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14
 .tabs button { border: none; background: none; padding: 7px 16px; border-radius: 7px; color: var(--muted); font-weight: 500; }
 .tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
 button:disabled { opacity: 0.45; cursor: default; }
+.sav-big { font: 600 28px/1.2 var(--f-display); font-variant-numeric: tabular-nums; color: var(--good); }
+#savMonths > summary { justify-content: flex-start; gap: 8px; color: var(--muted); }
+#savMonths[open] > summary { margin-bottom: 8px; }
 </style>
 
 <div class="wrap">
@@ -189,6 +192,19 @@ button:disabled { opacity: 0.45; cursor: default; }
       <p class="small muted" id="schedSub"></p>
     </div>
     <div class="tw"><table id="sched"></table></div>
+  </section>
+
+  <section class="panel" id="savPanel" aria-labelledby="h-sav" hidden>
+    <div style="display:grid;gap:4px">
+      <h2 id="h-sav">Накопления на отпуска</h2>
+      <p class="small muted" id="savRule" style="max-width:78ch"></p>
+    </div>
+    <div class="row">
+      <label class="f">Посчитать к дате<input type="date" id="savTo"></label>
+      <div class="row" style="gap:6px;align-items:center" id="savChips"></div>
+    </div>
+    <div id="savResult" style="display:grid;gap:4px"></div>
+    <details id="savMonths"><summary class="small">По месяцам</summary><div class="tw"><table id="savTable"></table></div></details>
   </section>
 
   <details class="panel" id="detAlt" open>

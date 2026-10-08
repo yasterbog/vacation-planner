@@ -148,6 +148,9 @@ ul.rules { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14
 .tabs button { border: none; background: none; padding: 7px 16px; border-radius: 7px; color: var(--muted); font-weight: 500; }
 .tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
 button:disabled { opacity: 0.45; cursor: default; }
+.sav-big { font: 600 28px/1.2 var(--f-display); font-variant-numeric: tabular-nums; color: var(--good); }
+#savMonths > summary { justify-content: flex-start; gap: 8px; color: var(--muted); }
+#savMonths[open] > summary { margin-bottom: 8px; }
 </style>
 </head>
 <body>
@@ -203,6 +206,19 @@ button:disabled { opacity: 0.45; cursor: default; }
       <p class="small muted" id="schedSub"></p>
     </div>
     <div class="tw"><table id="sched"></table></div>
+  </section>
+
+  <section class="panel" id="savPanel" aria-labelledby="h-sav" hidden>
+    <div style="display:grid;gap:4px">
+      <h2 id="h-sav">Накопления на отпуска</h2>
+      <p class="small muted" id="savRule" style="max-width:78ch"></p>
+    </div>
+    <div class="row">
+      <label class="f">Посчитать к дате<input type="date" id="savTo"></label>
+      <div class="row" style="gap:6px;align-items:center" id="savChips"></div>
+    </div>
+    <div id="savResult" style="display:grid;gap:4px"></div>
+    <details id="savMonths"><summary class="small">По месяцам</summary><div class="tw"><table id="savTable"></table></div></details>
   </section>
 
   <details class="panel" id="detAlt" open>
@@ -682,7 +698,58 @@ button:disabled { opacity: 0.45; cursor: default; }
     return { ledger: L, paoLedger: paoL, pao, extras, vac, k, calib, missing };
   }
 
-  root.VacEngine = { parseStatement, reconcile, bonusLoss, mk, parse, iso, parts, dim, dow, isWorkWeekend, mkey, addMonths, r2, isOff, isH112, workdays, prevWorkday, calStatus, taxCum, marginal,
+
+  // ---------- накопления ----------
+  // С каждой выплаты зарплаты (аванс/остаток) уходит mandatory на обязательные траты, остальное — в копилку.
+  // Премии — целиком в копилку. Отпускные сначала добирают урезанные из-за отпуска выплаты до обычных (base — те же
+  // выплаты без отпусков), остаток — в копилку. Считаются выплаты в (from, to]; с warm начинается учёт резерва.
+  function savingsPlan(sim, base, o) {
+    const group = (pays) => {
+      const m = new Map();
+      pays.forEach((p) => {
+        const g = m.get(p.date) || { date: p.date, pay: 0, salDay: false, vac: 0, bonus: 0 };
+        if (p.kind === 'vac') g.vac += p.net; else if (p.kind === 'bonus') g.bonus += p.net; else g.pay += p.net;
+        if (p.kind === 'adv' || p.kind === 'sal') g.salDay = true;
+        m.set(p.date, g);
+      });
+      return m;
+    };
+    const G = group(sim.pays.filter((p) => p.date >= o.warm && p.date <= o.to));
+    const B = group(base.pays.filter((p) => p.date >= o.warm && p.date <= o.to + 90));
+    const dates = [...G.keys()].sort((a, b) => a - b);
+    let reserve = 0;
+    const events = [];
+    dates.forEach((d) => {
+      const g = G.get(d);
+      let save = 0, fromVac = 0;
+      if (g.vac) {
+        let need = 0;
+        dates.filter((e) => e >= d && e <= d + 75 && G.get(e).salDay).forEach((e) => { const n = B.get(e); if (n) need += Math.max(0, n.pay - G.get(e).pay); });
+        const keep = Math.min(g.vac, need);
+        reserve += keep; fromVac = g.vac - keep; save += fromVac;
+      }
+      if (g.salDay) {
+        const n = B.get(d), normal = n ? n.pay : g.pay;
+        const top = Math.min(reserve, Math.max(0, normal - g.pay));
+        reserve -= top;
+        save += g.pay + top - o.mandatory;
+      } else save += g.pay;
+      save += g.bonus;
+      if (d > o.from) events.push({ date: d, save: r2(save), bonus: r2(g.bonus), vac: r2(fromVac) });
+    });
+    const byMonth = [];
+    let cum = 0;
+    events.forEach((e) => {
+      const [y, m] = parts(e.date), key = mkey(y, m);
+      let row = byMonth[byMonth.length - 1];
+      if (!row || row.key !== key) { row = { key, y, m, save: 0, bonus: 0, vac: 0, cum: 0 }; byMonth.push(row); }
+      row.save += e.save; row.bonus += e.bonus; row.vac += e.vac; cum += e.save; row.cum = cum;
+    });
+    byMonth.forEach((r) => { r.save = r2(r.save); r.bonus = r2(r.bonus); r.vac = r2(r.vac); r.cum = r2(r.cum); });
+    return { total: r2(cum), bonus: r2(events.reduce((s, e) => s + e.bonus, 0)), byMonth, events, reserve: r2(reserve) };
+  }
+
+  root.VacEngine = { savingsPlan, parseStatement, reconcile, bonusLoss, mk, parse, iso, parts, dim, dow, isWorkWeekend, mkey, addMonths, r2, isOff, isH112, workdays, prevWorkday, calStatus, taxCum, marginal,
     chargedDays, holidaysIn, endForCharged, restBlock, simulate, scenario, alternatives, grossFromNet, entitlement, fmtRange, MONTHS, MONTHS_GEN };
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -905,7 +972,7 @@ button:disabled { opacity: 0.45; cursor: default; }
     document.querySelectorAll('[data-len]').forEach((b) => { b.disabled = !t; });
     $('detAlt').hidden = !t || !!(sc && sc.tv.unpaid); $('detCalc').hidden = !t || !!(sc && sc.tv.unpaid);
     renderFacts(); renderCal(); renderNotes(); renderTiles(); renderSchedule(); if (t && !sc.tv.unpaid) { renderAlts(); renderCalc(); }
-    renderSaved(); renderRecon(); renderRules();
+    renderSavings(); renderSaved(); renderRecon(); renderRules();
   }
   const usedBefore = (t) => vacs().filter((v) => !v.unpaid && v.start < t.start && !(v.start <= t.end && t.start <= v.end)).reduce((s, v) => s + E.chargedDays(v.start, v.end), 0);
 
@@ -1222,6 +1289,51 @@ button:disabled { opacity: 0.45; cursor: default; }
     try { await ghLoadAll(); setStore('gh'); render(); renderSync(); } catch (e) { setStore('gh', 'Не удалось обновить из GitHub: ' + e.message); }
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshGh(false); });
+
+
+  // ---------- накопления ----------
+  const savKey = () => 'vp-savto-' + cur;
+  function savDefault() {
+    const t = target();
+    return t && t.start > today ? t.start - 1 : E.mk(E.parts(today)[0] + 1, 12, 31);
+  }
+  function renderSavings() {
+    const sv = P().savings;
+    $('savPanel').hidden = !sv;
+    if (!sv) return;
+    const items = sv.items || [];
+    const mandatory = items.reduce((s, i) => s + (+i.amount || 0), 0) || +sv.mandatory || 0;
+    const t = target();
+    const stored = ls.get(savKey());
+    let to = stored ? E.parse(stored) : savDefault();
+    if (to <= today) to = savDefault();
+    $('savTo').value = E.iso(to);
+    $('savRule').textContent = 'С каждой выплаты зарплаты откладывается ' + (items.length ? items.map((i) => rub(+i.amount) + ' ' + i.label).join(' и ') : rub(mandatory)) +
+      ', всё сверх — на отпуска. Премии целиком на отпуска. Если выплату урезал отпуск, отпускные добирают её до обычной суммы, остаток отпускных тоже идёт в копилку.';
+    const y = E.parts(today)[0];
+    const chips = [];
+    if (t && t.start > today) chips.push(['К отпуску', t.start - 1]);
+    chips.push(['К 31 декабря', E.mk(y, 12, 31)], ['Через год', E.mk(y + 1, ...E.parts(today).slice(1))], ['Через 2 года', E.mk(y + 2, ...E.parts(today).slice(1))], ['Через 3 года', E.mk(y + 3, ...E.parts(today).slice(1))]);
+    $('savChips').innerHTML = chips.map(([l, d]) => '<button class="chip" data-savto="' + d + '"' + (d === to ? ' aria-pressed="true" style="border-color:var(--sea)"' : '') + '>' + l + '</button>').join('');
+    const vacList = t ? M.saved.filter((v) => !(v.start <= t.end && t.start <= v.end)).concat([M.saved.find((v) => v.start === t.start && v.end === t.end) || t]) : M.saved;
+    const hz = E.mk(E.parts(to)[0] + 1, 2, 28);
+    let plan;
+    try {
+      const sim = E.simulate(P(), vacList, hz, M.X), base = E.simulate(P(), [], hz, M.X);
+      plan = E.savingsPlan(sim, base, { mandatory, from: today, to, warm: today - 120 });
+    } catch (err) { $('savResult').innerHTML = '<p class="note"><b>Ошибка расчёта:</b> ' + esc(err.message) + '</p>'; return; }
+    const regular = plan.total - plan.bonus;
+    const hasVac = vacList.some((v) => v.end >= today && !v.unpaid);
+    $('savResult').innerHTML = '<span class="sav-big">' + signed(plan.total) + '</span>' +
+      '<span class="small">отложится с ' + dfull(today + 1) + ' по ' + dfull(to) + ' — прибавьте к тому, что уже накоплено</span>' +
+      '<span class="small muted">премии ' + rub(plan.bonus) + ', с зарплат' + (hasVac ? ' и остатков отпускных' : '') + ' ' + rub(regular) +
+      (hasVac ? '. Учтены ' + (t ? 'выбранные даты и ' : '') + 'сохранённые отпуска' : '') + '</span>' +
+      (E.parts(to)[0] >= 2028 ? '<span class="small muted">Дальше 2027 года расчёт предварительный: оклад считается неизменным, январские переносы выходных неизвестны.</span>' : '');
+    $('savTable').innerHTML = '<thead><tr><th>Месяц</th><th class="n">Отложите</th><th class="n">в т. ч. премия</th><th class="n">Всего к концу месяца</th></tr></thead><tbody>' +
+      plan.byMonth.map((r) => '<tr><td>' + mcap(r.y, r.m) + '</td><td class="n ' + cls(r.save) + '">' + signed(r.save) + '</td><td class="n muted">' + (r.bonus ? rub(r.bonus) : '') + '</td><td class="n"><b>' + rub(r.cum) + '</b></td></tr>').join('') + '</tbody>';
+  }
+  $('savTo').addEventListener('change', (e) => { if (!e.target.value) return; ls.set(savKey(), e.target.value); renderSavings(); });
+  $('savChips').addEventListener('click', (e) => { const b = e.target.closest('[data-savto]'); if (!b) return; ls.set(savKey(), E.iso(+b.dataset.savto)); renderSavings(); });
 
   // ---------- события ----------
   $('tabs').addEventListener('click', (e) => {

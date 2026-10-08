@@ -440,6 +440,57 @@
     return { ledger: L, paoLedger: paoL, pao, extras, vac, k, calib, missing };
   }
 
-  root.VacEngine = { parseStatement, reconcile, bonusLoss, mk, parse, iso, parts, dim, dow, isWorkWeekend, mkey, addMonths, r2, isOff, isH112, workdays, prevWorkday, calStatus, taxCum, marginal,
+
+  // ---------- накопления ----------
+  // С каждой выплаты зарплаты (аванс/остаток) уходит mandatory на обязательные траты, остальное — в копилку.
+  // Премии — целиком в копилку. Отпускные сначала добирают урезанные из-за отпуска выплаты до обычных (base — те же
+  // выплаты без отпусков), остаток — в копилку. Считаются выплаты в (from, to]; с warm начинается учёт резерва.
+  function savingsPlan(sim, base, o) {
+    const group = (pays) => {
+      const m = new Map();
+      pays.forEach((p) => {
+        const g = m.get(p.date) || { date: p.date, pay: 0, salDay: false, vac: 0, bonus: 0 };
+        if (p.kind === 'vac') g.vac += p.net; else if (p.kind === 'bonus') g.bonus += p.net; else g.pay += p.net;
+        if (p.kind === 'adv' || p.kind === 'sal') g.salDay = true;
+        m.set(p.date, g);
+      });
+      return m;
+    };
+    const G = group(sim.pays.filter((p) => p.date >= o.warm && p.date <= o.to));
+    const B = group(base.pays.filter((p) => p.date >= o.warm && p.date <= o.to + 90));
+    const dates = [...G.keys()].sort((a, b) => a - b);
+    let reserve = 0;
+    const events = [];
+    dates.forEach((d) => {
+      const g = G.get(d);
+      let save = 0, fromVac = 0;
+      if (g.vac) {
+        let need = 0;
+        dates.filter((e) => e >= d && e <= d + 75 && G.get(e).salDay).forEach((e) => { const n = B.get(e); if (n) need += Math.max(0, n.pay - G.get(e).pay); });
+        const keep = Math.min(g.vac, need);
+        reserve += keep; fromVac = g.vac - keep; save += fromVac;
+      }
+      if (g.salDay) {
+        const n = B.get(d), normal = n ? n.pay : g.pay;
+        const top = Math.min(reserve, Math.max(0, normal - g.pay));
+        reserve -= top;
+        save += g.pay + top - o.mandatory;
+      } else save += g.pay;
+      save += g.bonus;
+      if (d > o.from) events.push({ date: d, save: r2(save), bonus: r2(g.bonus), vac: r2(fromVac) });
+    });
+    const byMonth = [];
+    let cum = 0;
+    events.forEach((e) => {
+      const [y, m] = parts(e.date), key = mkey(y, m);
+      let row = byMonth[byMonth.length - 1];
+      if (!row || row.key !== key) { row = { key, y, m, save: 0, bonus: 0, vac: 0, cum: 0 }; byMonth.push(row); }
+      row.save += e.save; row.bonus += e.bonus; row.vac += e.vac; cum += e.save; row.cum = cum;
+    });
+    byMonth.forEach((r) => { r.save = r2(r.save); r.bonus = r2(r.bonus); r.vac = r2(r.vac); r.cum = r2(r.cum); });
+    return { total: r2(cum), bonus: r2(events.reduce((s, e) => s + e.bonus, 0)), byMonth, events, reserve: r2(reserve) };
+  }
+
+  root.VacEngine = { savingsPlan, parseStatement, reconcile, bonusLoss, mk, parse, iso, parts, dim, dow, isWorkWeekend, mkey, addMonths, r2, isOff, isH112, workdays, prevWorkday, calStatus, taxCum, marginal,
     chargedDays, holidaysIn, endForCharged, restBlock, simulate, scenario, alternatives, grossFromNet, entitlement, fmtRange, MONTHS, MONTHS_GEN };
 })(typeof window !== 'undefined' ? window : globalThis);

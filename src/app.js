@@ -215,7 +215,7 @@
     document.querySelectorAll('[data-len]').forEach((b) => { b.disabled = !t; });
     $('detAlt').hidden = !t || !!(sc && sc.tv.unpaid); $('detCalc').hidden = !t || !!(sc && sc.tv.unpaid);
     renderFacts(); renderCal(); renderNotes(); renderTiles(); renderSchedule(); if (t && !sc.tv.unpaid) { renderAlts(); renderCalc(); }
-    renderSaved(); renderRecon(); renderRules();
+    renderSavings(); renderSaved(); renderRecon(); renderRules();
   }
   const usedBefore = (t) => vacs().filter((v) => !v.unpaid && v.start < t.start && !(v.start <= t.end && t.start <= v.end)).reduce((s, v) => s + E.chargedDays(v.start, v.end), 0);
 
@@ -532,6 +532,51 @@
     try { await ghLoadAll(); setStore('gh'); render(); renderSync(); } catch (e) { setStore('gh', 'Не удалось обновить из GitHub: ' + e.message); }
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshGh(false); });
+
+
+  // ---------- накопления ----------
+  const savKey = () => 'vp-savto-' + cur;
+  function savDefault() {
+    const t = target();
+    return t && t.start > today ? t.start - 1 : E.mk(E.parts(today)[0] + 1, 12, 31);
+  }
+  function renderSavings() {
+    const sv = P().savings;
+    $('savPanel').hidden = !sv;
+    if (!sv) return;
+    const items = sv.items || [];
+    const mandatory = items.reduce((s, i) => s + (+i.amount || 0), 0) || +sv.mandatory || 0;
+    const t = target();
+    const stored = ls.get(savKey());
+    let to = stored ? E.parse(stored) : savDefault();
+    if (to <= today) to = savDefault();
+    $('savTo').value = E.iso(to);
+    $('savRule').textContent = 'С каждой выплаты зарплаты откладывается ' + (items.length ? items.map((i) => rub(+i.amount) + ' ' + i.label).join(' и ') : rub(mandatory)) +
+      ', всё сверх — на отпуска. Премии целиком на отпуска. Если выплату урезал отпуск, отпускные добирают её до обычной суммы, остаток отпускных тоже идёт в копилку.';
+    const y = E.parts(today)[0];
+    const chips = [];
+    if (t && t.start > today) chips.push(['К отпуску', t.start - 1]);
+    chips.push(['К 31 декабря', E.mk(y, 12, 31)], ['Через год', E.mk(y + 1, ...E.parts(today).slice(1))], ['Через 2 года', E.mk(y + 2, ...E.parts(today).slice(1))], ['Через 3 года', E.mk(y + 3, ...E.parts(today).slice(1))]);
+    $('savChips').innerHTML = chips.map(([l, d]) => '<button class="chip" data-savto="' + d + '"' + (d === to ? ' aria-pressed="true" style="border-color:var(--sea)"' : '') + '>' + l + '</button>').join('');
+    const vacList = t ? M.saved.filter((v) => !(v.start <= t.end && t.start <= v.end)).concat([M.saved.find((v) => v.start === t.start && v.end === t.end) || t]) : M.saved;
+    const hz = E.mk(E.parts(to)[0] + 1, 2, 28);
+    let plan;
+    try {
+      const sim = E.simulate(P(), vacList, hz, M.X), base = E.simulate(P(), [], hz, M.X);
+      plan = E.savingsPlan(sim, base, { mandatory, from: today, to, warm: today - 120 });
+    } catch (err) { $('savResult').innerHTML = '<p class="note"><b>Ошибка расчёта:</b> ' + esc(err.message) + '</p>'; return; }
+    const regular = plan.total - plan.bonus;
+    const hasVac = vacList.some((v) => v.end >= today && !v.unpaid);
+    $('savResult').innerHTML = '<span class="sav-big">' + signed(plan.total) + '</span>' +
+      '<span class="small">отложится с ' + dfull(today + 1) + ' по ' + dfull(to) + ' — прибавьте к тому, что уже накоплено</span>' +
+      '<span class="small muted">премии ' + rub(plan.bonus) + ', с зарплат' + (hasVac ? ' и остатков отпускных' : '') + ' ' + rub(regular) +
+      (hasVac ? '. Учтены ' + (t ? 'выбранные даты и ' : '') + 'сохранённые отпуска' : '') + '</span>' +
+      (E.parts(to)[0] >= 2028 ? '<span class="small muted">Дальше 2027 года расчёт предварительный: оклад считается неизменным, январские переносы выходных неизвестны.</span>' : '');
+    $('savTable').innerHTML = '<thead><tr><th>Месяц</th><th class="n">Отложите</th><th class="n">в т. ч. премия</th><th class="n">Всего к концу месяца</th></tr></thead><tbody>' +
+      plan.byMonth.map((r) => '<tr><td>' + mcap(r.y, r.m) + '</td><td class="n ' + cls(r.save) + '">' + signed(r.save) + '</td><td class="n muted">' + (r.bonus ? rub(r.bonus) : '') + '</td><td class="n"><b>' + rub(r.cum) + '</b></td></tr>').join('') + '</tbody>';
+  }
+  $('savTo').addEventListener('change', (e) => { if (!e.target.value) return; ls.set(savKey(), e.target.value); renderSavings(); });
+  $('savChips').addEventListener('click', (e) => { const b = e.target.closest('[data-savto]'); if (!b) return; ls.set(savKey(), E.iso(+b.dataset.savto)); renderSavings(); });
 
   // ---------- события ----------
   $('tabs').addEventListener('click', (e) => {

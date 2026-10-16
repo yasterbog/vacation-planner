@@ -8,6 +8,16 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Отпускные">
 <link rel="manifest" href="manifest.webmanifest">
+<script>
+// В приложении с рабочего стола iPhone отключаем зум щипком (в обычном Safari зум остаётся)
+(function () {
+  var standalone = navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  if (!standalone) return;
+  document.querySelector('meta[name=viewport]').setAttribute('content', 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover');
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (t) { document.addEventListener(t, function (e) { e.preventDefault(); }, { passive: false }); });
+  document.addEventListener('touchmove', function (e) { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
+})();
+</script>
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-180.png">
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px/1.45 system-ui,-apple-system,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
@@ -37,7 +47,9 @@
   --off-bg: #3b1f22; --off-ink: #f59a92; --holiday: #e0544b; --on-holiday: #ffffff;
   --good: #4cc27e; --bad: #f2706a; --warn: #e3ac4a; --warn-soft: #33290f; color-scheme: dark; }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; touch-action: manipulation; } /* без зума по двойному тапу и задержки нажатий */
+html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+@media (pointer: coarse), (max-width: 820px) { input, select { font-size: 16px; } } /* iOS приближает поля с шрифтом мельче 16px */
 body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body); }
 .wrap { max-width: 1040px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 56px; display: grid; gap: 18px; }
 h1 { font: 600 22px/1.2 var(--f-display); margin: 0; letter-spacing: -0.01em; }

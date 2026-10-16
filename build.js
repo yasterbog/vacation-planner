@@ -22,6 +22,16 @@ const site = `<!doctype html>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Отпускные">
 <link rel="manifest" href="manifest.webmanifest">
+<script>
+// В приложении с рабочего стола iPhone отключаем зум щипком (в обычном Safari зум остаётся)
+(function () {
+  var standalone = navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  if (!standalone) return;
+  document.querySelector('meta[name=viewport]').setAttribute('content', 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover');
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (t) { document.addEventListener(t, function (e) { e.preventDefault(); }, { passive: false }); });
+  document.addEventListener('touchmove', function (e) { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
+})();
+</script>
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-180.png">
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px/1.45 system-ui,-apple-system,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>

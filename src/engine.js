@@ -443,39 +443,46 @@
 
   // ---------- накопления ----------
   // С каждой выплаты зарплаты (аванс/остаток) уходит mandatory на обязательные траты, остальное — в копилку.
-  // Премии — целиком в копилку. Отпускные сначала добирают урезанные из-за отпуска выплаты до обычных (base — те же
-  // выплаты без отпусков), остаток — в копилку. Считаются выплаты в (from, to]; с warm начинается учёт резерва.
+  // Премии — целиком в копилку. Отпускные каждого отпуска сначала добирают до обычной суммы те аванс и зарплату,
+  // чей период (1–15 или 16–конец месяца) задел этот отпуск (base — те же выплаты без отпусков); остаток — в копилку.
+  // Считаются выплаты в (from, to]; учёт резерва начинается с warm. Выплаты после to нужны, чтобы знать, сколько придержать.
   function savingsPlan(sim, base, o) {
-    const group = (pays) => {
-      const m = new Map();
-      pays.forEach((p) => {
-        const g = m.get(p.date) || { date: p.date, pay: 0, salDay: false, vac: 0, bonus: 0 };
-        if (p.kind === 'vac') g.vac += p.net; else if (p.kind === 'bonus') g.bonus += p.net; else g.pay += p.net;
-        if (p.kind === 'adv' || p.kind === 'sal') g.salDay = true;
-        m.set(p.date, g);
-      });
-      return m;
-    };
-    // выплаты после конечной даты тоже нужны: отпускные резервируются под урезанные выплаты, даже если те придут позже
-    const G = group(sim.pays.filter((p) => p.date >= o.warm && p.date <= o.to + 90));
-    const B = group(base.pays.filter((p) => p.date >= o.warm && p.date <= o.to + 90));
-    const dates = [...G.keys()].sort((a, b) => a - b);
+    const inR = sim.pays.filter((p) => p.date >= o.warm && p.date <= o.to + 120);
+    const isSal = (p) => p.kind === 'adv' || p.kind === 'sal';
+    const baseNet = new Map(base.pays.filter(isSal).map((p) => [p.kind + ':' + p.ref, p.net]));
+    const period = (p) => { const [y, m] = p.ref.split('-').map(Number); return p.kind === 'adv' ? [mk(y, m, 1), mk(y, m, 15)] : [mk(y, m, 16), mk(y, m, dim(y, m))]; };
+    const salPays = inR.filter(isSal);
+    const groups = new Map();
+    inR.forEach((p) => {
+      const g = groups.get(p.date) || { pay: 0, salDay: false, vac: [], bonus: 0 };
+      if (p.kind === 'vac') g.vac.push(p); else if (p.kind === 'bonus') g.bonus += p.net; else g.pay += p.net;
+      if (isSal(p)) g.salDay = true;
+      groups.set(p.date, g);
+    });
+    const dates = [...groups.keys()].sort((x, y) => x - y);
+    const topUp = new Map(); // дата выплаты → сколько добрать из отпускных
     let reserve = 0;
     const events = [];
     dates.forEach((d) => {
       if (d > o.to) return;
-      const g = G.get(d);
+      const g = groups.get(d);
       let save = 0, fromVac = 0;
-      if (g.vac) {
-        let need = 0;
-        dates.filter((e) => e >= d && e <= d + 75 && G.get(e).salDay).forEach((e) => { const n = B.get(e); if (n) need += Math.max(0, n.pay - G.get(e).pay); });
-        const keep = Math.min(g.vac, need);
-        reserve += keep; fromVac = g.vac - keep; save += fromVac;
-      }
+      g.vac.forEach((vp) => {
+        const v = sim.vacRes.find((r) => iso(r.start) === vp.ref);
+        let left = vp.net;
+        if (v) salPays.filter((p) => p.date >= d).forEach((p) => {
+          const [pa, pb] = period(p);
+          if (pb < v.start || pa > v.end) return;
+          const short = Math.max(0, (baseNet.has(p.kind + ':' + p.ref) ? baseNet.get(p.kind + ':' + p.ref) : p.net) - p.net);
+          const take = Math.min(left, short);
+          if (take <= 0) return;
+          topUp.set(p.date, (topUp.get(p.date) || 0) + take); left -= take; reserve += take;
+        });
+        fromVac += left; save += left;
+      });
       if (g.salDay) {
-        const n = B.get(d), normal = n ? n.pay : g.pay;
-        const top = Math.min(reserve, Math.max(0, normal - g.pay));
-        reserve -= top;
+        const top = topUp.get(d) || 0;
+        reserve -= top; topUp.delete(d);
         save += g.pay + top - o.mandatory;
       } else save += g.pay;
       save += g.bonus;

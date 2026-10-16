@@ -456,12 +456,14 @@
       });
       return m;
     };
-    const G = group(sim.pays.filter((p) => p.date >= o.warm && p.date <= o.to));
+    // выплаты после конечной даты тоже нужны: отпускные резервируются под урезанные выплаты, даже если те придут позже
+    const G = group(sim.pays.filter((p) => p.date >= o.warm && p.date <= o.to + 90));
     const B = group(base.pays.filter((p) => p.date >= o.warm && p.date <= o.to + 90));
     const dates = [...G.keys()].sort((a, b) => a - b);
     let reserve = 0;
     const events = [];
     dates.forEach((d) => {
+      if (d > o.to) return;
       const g = G.get(d);
       let save = 0, fromVac = 0;
       if (g.vac) {

@@ -571,6 +571,7 @@
       '<span class="small">отложится с ' + dfull(today + 1) + ' по ' + dfull(to) + ' — прибавьте к тому, что уже накоплено</span>' +
       '<span class="small muted">премии ' + rub(plan.bonus) + ', с зарплат' + (hasVac ? ' и остатков отпускных' : '') + ' ' + rub(regular) +
       (hasVac ? '. Учтены ' + (t ? 'выбранные даты и ' : '') + 'сохранённые отпуска' : '') + '</span>' +
+      (plan.reserve > 0.5 ? '<span class="small">Ещё ' + rub(plan.reserve) + ' из отпускных лежат отдельно: ими добираются урезанные выплаты после ' + dfull(to) + ', в эту сумму они не входят.</span>' : '') +
       (E.parts(to)[0] >= 2028 ? '<span class="small muted">Дальше 2027 года расчёт предварительный: оклад считается неизменным, январские переносы выходных неизвестны.</span>' : '');
     $('savTable').innerHTML = '<thead><tr><th>Месяц</th><th class="n">Отложите</th><th class="n">в т. ч. премия</th><th class="n">Всего к концу месяца</th></tr></thead><tbody>' +
       plan.byMonth.map((r) => '<tr><td>' + mcap(r.y, r.m) + '</td><td class="n ' + cls(r.save) + '">' + signed(r.save) + '</td><td class="n muted">' + (r.bonus ? rub(r.bonus) : '') + '</td><td class="n"><b>' + rub(r.cum) + '</b></td></tr>').join('') + '</tbody>';
